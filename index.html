@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>赛博逗猫棒-提师傅专用</title>
+    <style>
+        :root {
+            --stroke-color: #182562;
+        }
+
+        .sakana-box {
+            position: relative;
+            width: 500px;
+            height: 800px;
+            margin: 0 auto;
+            user-select: none;
+            touch-action: none;
+        }
+
+        .sakana-character {
+            position: absolute;
+            width: 300px;
+            height: 600px;
+            left: 50%;
+            bottom: 0;
+            margin-left: -150px;
+            background-size: contain;
+            background-repeat: no-repeat;
+            transition: transform 0.1s linear;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        .sakana-character[data-character="chisato"] {
+            background-image: url('./chisato.png');
+        }
+
+        .sakana-character[data-character="takina"] {
+            background-image: url('./takina.png');
+        }
+
+        canvas {
+            position: absolute;
+            z-index: 1;
+        }
+
+        body {
+            background: #f0f0f0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .ctrl-box {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            padding: 10px;
+            background: rgba(255,255,255,0.9);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 999;
+        }
+
+        .ctrl-box button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            background: #75BCC3;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 16px;
+        }
+
+        .ctrl-box button.active {
+            background: #B9594C;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <div id="sakana-widget"></div>
+    
+    <div class="ctrl-box">
+        <button onclick="toggleMute()">静音</button>
+        <button onclick="switchCharacter()">切换</button>
+        <button onclick="toggleAuto()">自动</button>
+    </div>
+
+<script>
+const Sakana = (() => {
+    const CHARACTERS = {
+        chisato: { r: 1, y: 40, t: 0, w: 0, d: 0.98 },
+        takina: { r: 12, y: 2, t: 0, w: 0, d: 0.975 }
+    };
+
+    const AUDIOS = {
+        chisato: new Audio('./chinanago.mp3'),
+        takina: new Audio('./sakana.mp3')
+    };
+
+    let currentCharacter = 'takina';
+    let isMuted = false;
+    let physicsParams = {...CHARACTERS.takina};
+    let canvas, ctx, characterEl, containerEl;
+    let isDragging = false;
+    let autoInterval;
+
+    // 强化弹簧参数
+    const SPRING = {
+        baseY: 800,
+        length: 320,
+        tension: -2.5,      // 增加张力系数
+        curvature: 1.5     // 新增曲率系数
+    };
+
+    function init(container) {
+        containerEl = document.querySelector(container);
+        recreateCanvas();
+        setupEventListeners();
+        requestAnimationFrame(update);
+    }
+
+    function recreateCanvas() {
+        containerEl.innerHTML = `
+            <div class="sakana-box">
+                <canvas width="500" height="800"></canvas>
+                <div class="sakana-character" data-character="${currentCharacter}"></div>
+            </div>
+        `;
+
+        canvas = containerEl.querySelector('canvas');
+        ctx = canvas.getContext('2d');
+        characterEl = containerEl.querySelector('.sakana-character');
+        
+        physicsParams = {...CHARACTERS[currentCharacter]};
+        physicsParams.inertia = 0.12;
+        physicsParams.decay = 0.975;
+    }
+
+    function setupEventListeners() {
+        canvas.addEventListener('mousedown', startDrag);
+        canvas.addEventListener('touchstart', startDrag, { passive: true });
+    }
+
+    function update() {
+        if(!isDragging) {
+            physicsParams.w -= physicsParams.r * 0.15;
+            physicsParams.r += physicsParams.w * physicsParams.inertia;
+            physicsParams.t -= physicsParams.y * 0.18;
+            physicsParams.y += physicsParams.t * physicsParams.inertia;
+
+            physicsParams.w *= physicsParams.decay;
+            physicsParams.t *= physicsParams.decay;
+        }
+
+        draw();
+        requestAnimationFrame(update);
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, 500, 800);
+        
+        // 强化后的曲线算法
+        const baseX = 250;
+        const baseY = SPRING.baseY;
+        const endX = baseX + physicsParams.r;
+        const endY = baseY - SPRING.length + physicsParams.y;
+        
+        ctx.beginPath();
+        ctx.moveTo(baseX, baseY);
+        
+        // 动态控制点计算
+        const deltaY = (endY - baseY) * SPRING.curvature;
+        const controlX = baseX + (endX - baseX) * SPRING.tension;
+        const controlY = baseY + deltaY * 0.6 - physicsParams.y * 1.2;
+
+        ctx.quadraticCurveTo(
+            controlX,
+            controlY,
+            endX,
+            endY
+        );
+
+        ctx.strokeStyle = 'var(--stroke-color)';
+        ctx.lineWidth = 10;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        characterEl.style.transform = `
+            rotate(${physicsParams.r}deg)
+            translateX(${physicsParams.r}px)
+            translateY(${physicsParams.y}px)
+        `;
+    }
+
+    function startDrag(e) {
+        isDragging = true;
+        const rect = canvas.getBoundingClientRect();
+        const startX = (e.clientX || e.touches[0].clientX) - rect.left;
+        const startY = (e.clientY || e.touches[0].clientY) - rect.top;
+
+        const moveHandler = (e) => {
+            if (!isDragging) return;
+            const x = (e.clientX || e.touches[0].clientX) - rect.left - startX;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top - startY;
+            
+            physicsParams.r = Math.max(-60, Math.min(60, x * 0.15));
+            physicsParams.y = Math.max(-110, Math.min(110, y * 0.2));
+        };
+
+        const endHandler = () => {
+            isDragging = false;
+            window.removeEventListener('mousemove', moveHandler);
+            window.removeEventListener('touchmove', moveHandler);
+            if (!isMuted) playSound();
+        };
+
+        window.addEventListener('mousemove', moveHandler);
+        window.addEventListener('touchmove', moveHandler, { passive: true });
+        window.addEventListener('mouseup', endHandler, { once: true });
+        window.addEventListener('touchend', endHandler, { once: true });
+    }
+
+    function playSound() {
+        const audio = AUDIOS[currentCharacter];
+        if(audio.paused) {
+            audio.currentTime = 0;
+            audio.play().catch(() => isMuted = true);
+        }
+    }
+
+    return {
+        init,
+        toggleMute: () => {
+            isMuted = !isMuted;
+            AUDIOS.chisato.muted = AUDIOS.takina.muted = isMuted;
+        },
+        switchCharacter: () => {
+            currentCharacter = currentCharacter === 'chisato' ? 'takina' : 'chisato';
+            recreateCanvas();
+            setupEventListeners();
+        }
+    };
+})();
+
+// 初始化
+Sakana.init('#sakana-widget');
+
+// 全局控制函数
+function toggleMute() {
+    Sakana.toggleMute();
+}
+
+function switchCharacter() {
+    Sakana.switchCharacter();
+}
+
+function toggleAuto() {
+    const btn = document.querySelector('[onclick="toggleAuto()"]');
+    if(window.autoInterval) {
+        clearInterval(window.autoInterval);
+        window.autoInterval = null;
+        btn.classList.remove('active');
+    } else {
+        btn.classList.add('active');
+        window.autoInterval = setInterval(() => {
+            physicsParams.w += (Math.random() - 0.5) * 150;
+            physicsParams.t += (Math.random() - 0.5) * 100;
+        }, 2000);
+    }
+}
+</script>
+</body>
+</html>
